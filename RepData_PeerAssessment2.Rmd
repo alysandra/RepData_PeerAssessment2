@@ -1,0 +1,237 @@
+Stormy Weather: looking at severe weather events in the US
+=======================================================
+
+#Introduction
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+#Data
+
+The data for this assignment come in the form of a comma-separated-value file compressed via the bzip2 algorithm to reduce its size. You can download the file from the course web site:
+
+[Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) [47Mb]
+There is also some documentation of the database available. Here you will find how some of the variables are constructed/defined.
+
+National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+
+National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+The events in the database start in the year 1950 and end in November 2011. In the earlier years of the database there are generally fewer events recorded, most likely due to a lack of good records. More recent years should be considered more complete.
+
+#Assignment
+
+The basic goal of this assignment is to explore the NOAA Storm Database and answer some basic questions about severe weather events. You must use the database to answer the questions below and show the code for your entire analysis. Your analysis can consist of tables, figures, or other summaries. You may use any R package you want to support your analysis.
+
+#Start out to do list:
+1) Libraries needed:
+
+```{r, "lib"} 
+library(ggplot2)
+library(R.utils)
+library(gridExtra)
+library(plyr)
+```
+
+#Data loading
+
+```{r}
+# download file from URL
+if (!file.exists("~/repdata-data-Stormdata.csv.bz2")) {
+    download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", 
+        "~/repdata-data-Stormdata.csv.bz2")
+}
+
+# unzip file
+if (!file.exists("~/repdata-data-Stormdata.csv")) {
+    bunzip2("~/repdata-data-Stormdata.csv.bz2", "~/repdata-data-Stormdata.csv", remove = FALSE)
+}
+```
+
+# Load data into R
+```{r}
+data <- read.csv("~/repdata-data-Stormdata.csv")
+head(data)
+dim(data)
+```
+
+There are 902297 rows and 37 columns in total.
+The events in the database start in the year 1950 and end in November 2011. 
+
+Subsetting data into variables that are needed and adding a new variable, adding the two dollar value damage to form economic damages. 
+
+```{r datasubset}
+x <- which(colnames(data) %in% c("BGN_DATE", "PROPDMG", "CROPDMG", "EVTYPE", 
+    "INJURIES", "FATALITIES"))
+data <- data[, x]
+head(data)
+
+#Formatting date and time
+data$YEAR <- as.integer(format(as.Date(data$BGN_DATE, "%m/%d/%Y 0:00:00"), "%Y"))
+head(data)
+
+#To uppercase
+data$EVTYPE <- toupper(data$EVTYPE)
+head(data)
+
+# creates new variable
+data$ECONOMICDMG <- data$PROPDMG + data$CROPDMG
+head(data)
+
+# Select only positive value data
+data <- subset(data, data$FATALITIES > 0 | data$ECONOMICDMG > 0 | data$INJURIES > 
+    0)
+head(data)
+dim(data)
+```
+
+Because there are still too many variables, we shall sort them into an aggregated yearly amount rather than per event.
+
+```{r}
+
+eventYear <- ddply(data[, -1], .(YEAR, EVTYPE),
+                   .fun = function(x) {
+                         return(
+                           c(sum(x$FATALITIES), sum(x$ECONOMICDMG), sum(x$INJURIES))
+                              )
+                                      }
+                   )
+names(eventYear) <- c("YEAR", "EVTYPE", "FATALITIES", "ECONOMICDMG", "INJURIES")
+head(eventYear)
+
+```
+
+##The hard part: Grouping
+We group the events by its related categories, sorting out the differences in spelling, cases, alternatives, and such
+
+```{r grouping}
+#Function that calculates the events by categories (13 categories described in the synopsis)
+
+#grepl -> search for matches to argument pattern within each element of a character vector
+
+eventCategory <- function(x) {
+    ev <- x$EVTYPE[1]
+    if (grepl("LIG(H|N)T(N|)ING|TORNADO|T(H|)U(N|)(DER|ER|DEER|DERE)(STORM|STROM|TORM)|TSTM|HAIL", 
+        ev)) {
+        category <- "Convection"
+    } else if (grepl("WINT(ER|RY)|ICE|AVALANC(H|)E|SNOW|BLIZZARD|FREEZ|ICY|FROST", 
+        ev)) {
+        category <- "Winter"
+    } else if (grepl("COLD|HEAT|HOT|TEMPERATURE|COOL|WARM", ev)) {
+        category <- "Extreme Temp"
+    } else if (grepl("FLOOD| FLD$", ev)) {
+        category <- "Flood"
+    } else if (grepl("COASTAL|TSUNAMI|RIP CURRENT|MARINE|WATERSPOUT|SURF|SLEET|SEAS|(HIGH|RISING|HEAVY) (WAVES|SWELLS|WATER)", 
+        ev)) {
+        category <- "Marine"
+    } else if (grepl("TROPICAL|HURRICANE|STORM SURGE|TYPHOON", ev)) {
+        category <- "Tropical Cyclones"
+    } else if (grepl("WIND|MICROBURST", ev)) {
+        category <- "High Wind"
+    } else if (grepl("FIRE", ev)) {
+        category <- "Fire"
+    } else if (grepl("RAIN|PRECIP", ev)) {
+        category <- "Rain"
+    } else if (grepl("DROUGHT|DUST", ev)) {
+        category <- "Drought/Dust"
+    } else if (grepl("LANDSLIDE|MUD.*SLIDE", ev)) {
+        category <- "Landslide"
+    } else if (grepl("FOG|VOG", ev)) {
+        category <- "Fog"
+    } else {
+        category <- "Others"
+    }
+
+    x$EVGROUP <- rep(category, dim(x)[1])
+    return(x)
+}
+eventYear <- ddply(eventYear, .(EVTYPE), .fun = eventCategory)
+head(eventYear)
+```
+
+And we get slight tidier data, sorting by general event types that we categorised, followed by year.
+
+```{r}
+eventYear <- ddply(eventYear, .(EVTYPE), .fun = eventCategory)
+head(eventYear)
+
+```
+
+Following that, we sort it into a new dataset containing only year, the new event group we created, injuries, fatalities, and economic damage.
+```{r}
+groupYear <- ddply(eventYear, .(YEAR, EVGROUP), .fun = function(x) {
+    return(c( sum(x$INJURIES, sum(x$FATALITIES), sum(x$ECONOMICDMG))))
+})
+
+names(groupYear) <- c("YEAR", "EVGROUP", "FATALITIES", "ECONOMICDMG", "INJURIES")
+head(groupYear)
+
+# calculate average annual damage by group
+eventFirstYear <- ddply(groupYear, .(EVGROUP), .fun = function(x) {
+    return(c(min(x$YEAR)))
+})
+names(eventFirstYear) <- c("Weather.Event", "First.Year")
+head(eventFirstYear)
+
+```
+
+EventFirstYear shows us when each event first appeared in the dataset. Since all other conditions appear in 1993 except for Convection, to maintain a fair dataset, we only use data after 1993 for analysis.
+
+```{r after1993}
+
+groupYear <- subset(groupYear, YEAR >= 1993)
+
+# calculate average annual damage by group
+byGroup <- ddply(groupYear, .(EVGROUP), .fun = function(x) {
+    return(c(mean(x$FATALITIES), mean(x$ECONOMICDMG), mean(x$INJURIES)))
+})
+names(byGroup) <- c("EVGROUP", "AVG.FATALITIES", "AVG.ECONOMICDMG", "AVG.INJURIES")
+head(byGroup)
+```
+
+
+So, to answer the questions posed:
+
+##Section 1: Health Harmful Events
+
+```{r results1}
+
+
+# average annual populational damage by group of event
+byGroup$EVGROUP <- with(byGroup, reorder(EVGROUP, -AVG.FATALITIES))
+g <- ggplot(byGroup, aes(x = EVGROUP))
+g + geom_histogram(aes(weight = AVG.FATALITIES, fill = AVG.FATALITIES), binwidth = 5, 
+    color = "black") + ggtitle("Average Fatalities") + ylab("# Fatalities") + 
+    xlab("Weather Event") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# average annual populational damage by group of event
+byGroup$EVGROUP <- with(byGroup, reorder(EVGROUP, -AVG.INJURIES))
+g <- ggplot(byGroup, aes(x = EVGROUP))
+g + geom_histogram(aes(weight = AVG.INJURIES, fill = AVG.INJURIES), binwidth = 1, 
+    color = "red") + ggtitle("Average Injuries") + ylab("# Injuries") + xlab("Weather Event") + 
+    theme(axis.text.x = element_text(angle = 35, hjust = 1))
+```
+
+Therefore, convection is the most common cause of injuries amongst the weather events.
+
+##Question 2: Economic consequences
+We form a similiar histogram to show the economic damages caused by weather.
+
+```{r results2}
+
+byGroup$EVGROUP <- with(byGroup, reorder(EVGROUP, -AVG.ECONOMICDMG))
+g <- ggplot(byGroup, aes(x = EVGROUP))
+g + geom_histogram(aes(weight = AVG.ECONOMICDMG, fill = AVG.ECONOMICDMG), binwidth = 1, 
+    color = "white") + ggtitle("Average Economic Damage") + ylab("Economic damage") + 
+    xlab("Weather Event") + theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+```
+
+
+Conclusion
+==============================================
+
+Looking at this simplified end data, we can conclude that Convection - such as tornadoes, lightning strikes, thunder, hail and such conditions are the most hazardous to both humans and their pockets. The second ranking weather event forks, where extreme temperatures causes more harm to humans, while floods will result in greater economic damages. 
+
+However, in terms of fatalities, extreme temperatures are the highest cause of deaths cause by weather, putting the point across that human lives are fragile - and what injures you may not kill you.
